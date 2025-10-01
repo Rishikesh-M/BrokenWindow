@@ -1,8 +1,8 @@
-###⚡️ Fast Concurrent Bash Port Scanner
-##This script is a lightweight, concurrent TCP port scanner built entirely in Bash, leveraging the reliability of the netcat (nc) utility. It is designed to quickly check a range of ports on a specified target with configurable concurrency and timeouts.
+### Fast Concurrent Bash Port Scanner
+## This script is a lightweight, concurrent TCP port scanner built entirely in Bash, leveraging the reliability of the netcat (nc) utility. It is designed to quickly check a range of ports on a specified target with configurable concurrency and timeouts.
 
-###🚀 Usage
-##The script requires a target address and accepts three optional arguments for configuration:
+### 🚀 Usage
+## The script requires a target address and accepts three optional arguments for configuration:
 ```
 ./port_scanner.sh <target> [ports] [timeout_secs] [concurrency]
 ```
