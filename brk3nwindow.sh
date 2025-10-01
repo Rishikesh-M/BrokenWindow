@@ -1,45 +1,80 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-if [ "$#" -lt 1 ]; then
-    echo "Usage: $0 <host_or_ip> [start_port] [end_port]"
+TARGET="${1:-}"
+PORT_SPEC="${2:-1-1024}"
+TIMEOUT="${3:-1}"
+CONCURRENCY="${4:-200}"
+
+usage() {
+    printf "Usage: %s <target> [ports] [timeout_secs] [concurrency]\n" "$0" >&2
+    exit 2
+}
+
+if [[ -z "$TARGET" ]]; then usage; fi
+if ! command -v nc >/dev/null 2>&1; then
+    echo "Error: 'netcat' (nc) command not found. Install it to proceed." >&2
     exit 1
 fi
 
-target=$1
-start=${2:-1} 
-end=${3:-1024} 
+re='^[0-9]+$'
+if ! [[ "$TIMEOUT" =~ $re && "$CONCURRENCY" =~ $re ]]; then
+    echo "Error: timeout and concurrency must be integers" >&2
+    exit 3
+fi
+if (( TIMEOUT <= 0 || CONCURRENCY <= 0 )); then
+    echo "Error: timeout and concurrency must be > 0" >&2
+    exit 4
+fi
 
-echo "🎯 Scanning $target (TCP $start-$end)"
-echo "------------------------------------------------"
+expand_ports() {
+    local spec="$1" out=()
+    IFS=',' read -ra parts <<< "$spec"
+    for p in "${parts[@]}"; do
+        if [[ "$p" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+            local s=${BASH_REMATCH[1]} e=${BASH_REMATCH[2]}
+            if (( s < 1 || e > 65535 || s > e )); then echo "Error: Invalid port range $p" >&2; exit 5; fi
+            for ((i=s; i<=e; i++)); do out+=("$i"); done
+        elif [[ "$p" =~ ^[0-9]+$ ]]; then
+            if (( p < 1 || p > 65535 )); then echo "Error: Invalid port $p" >&2; exit 5; fi
+            out+=("$p")
+        else
+            echo "Error: Invalid port token: $p" >&2; exit 5
+        fi
+    done
+    printf "%s\n" "${out[@]}"
+}
 
-get_service_name() {
-    port=$1
-    proto=$2
-    service=$(grep -w "$port/$proto" /etc/services | awk '{print $1}' | head -n1)
-    if [ -n "$service" ]; then
-        echo "$service"
-    else
-        echo "unknown"
+ports=( $(expand_ports "$PORT_SPEC") )
+trap 'pkill -P $$ 2>/dev/null || true' INT TERM EXIT
+
+scan_port() {
+    local port=$1
+    if nc -z -w "$TIMEOUT" "$TARGET" "$port" >/dev/null 2>&1; then
+        printf "%s\n" "$port"
     fi
 }
 
-get_banner() {
-    port=$1
-    timeout 2 bash -c "exec 3<>/dev/tcp/$target/$port; echo '' >&3; head -n 1 <&3" 2>/dev/null
-}
+running=0
+pids=()
 
+for port in "${ports[@]}"; do
+    scan_port "$port" &
+    pids+=("$!")
+    running=$((running + 1))
 
-for port in $(seq $start $end); do
-    (echo >/dev/tcp/$target/$port) 2>/dev/null
-    if [ $? -eq 0 ]; then
-        service=$(get_service_name $port tcp)
-        banner=$(get_banner $port)
-        if [ -n "$banner" ]; then
-            echo "[+] TCP $port OPEN → $service | Banner: $banner"
-        else
-            echo "[+] TCP $port OPEN → $service"
-        fi
+    if (( running >= CONCURRENCY )); then
+        wait -n 2>/dev/null || true
+        newp=()
+        running=0
+        for id in "${pids[@]}"; do
+          if kill -0 "$id" 2>/dev/null; then
+            newp+=("$id");
+            running=$((running+1));
+          fi
+        done
+        pids=("${newp[@]}")
     fi
 done
 
-echo "✅ Scan completed."
+wait
